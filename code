@@ -1,0 +1,190 @@
+%SDL算法编写
+clc;close all
+%测试数据生成
+%噪声生成
+
+%A B矩阵生成
+A=[0.5768,0.3766;0.7382,0.0566;0.8291,0.4009;0.6519,0.2070;0.3972,0.8045];
+B=[1,0;0,1;0 ,0;0 ,0;0 ,0];
+x1=[];x2=[];XN1=[];XN2=[];XF=[];
+for i=1:2000
+    %case1的s1和s2生成
+    E=normrnd(0,1,[5,1]);
+    m1s11=normrnd(-10,1);
+    m1s12=normrnd(-5,1);
+    m1s21=normrnd(-6,1);
+    m1s22=normrnd(-5,1);
+    m1s1=[m1s11;m1s12];
+    m1s2=[m1s21;m1s22];
+    xL1=A*m1s1+B*m1s2+E;
+    x1=[x1,xL1];
+end
+for i=1:2000
+    E=normrnd(0,1,[5,1]);
+    m2s11=normrnd(-10,1);
+    m2s12=normrnd(-5,1);
+    m2s21=unifrnd(-3,-2);
+    m2s22=normrnd(5,1);
+    m2s1=[m2s11;m2s12];
+    m2s2=[m2s21;m2s22];
+    xL2=A*m2s1+B*m2s2+E;
+    x2=[x2,xL2];
+end
+Z1=zeros(30,2000);
+X1=[x1;x1;Z1];
+X2=[x2;x2;Z1];
+%测试数据生成完毕
+
+%SDL算法
+%初始化字典D
+W1=zeros(75,2000);
+W2=ones(75,2000);
+D1=ones(5,30);
+D2=zeros(5,30);
+D3=ones(5,15);
+EE=eye(15,15);
+Z2=zeros(15,15);
+E1=[EE,Z2;Z2,EE;Z2,Z2;Z2,Z2;Z2,Z2];
+E2=[Z2,Z2;Z2,Z2;EE,Z2;Z2,EE;Z2,Z2];
+E3=[Z2;Z2;Z2;Z2;EE];   
+iter=3;%迭代次数
+for j=1:iter
+    D=[D1,D2,D3];
+    DD1=[D;D*E1*E1.'+D*E3*E3.';E2.'];
+    DD2=[D;D*E2*E2.'+D*E3*E3.';E1.'];
+    J11=x1-D2*E2.'*W1-D3*E3.'*W1;
+    J12=x2-D2*E2.'*W2-D3*E3.'*W2;
+    J21=x1-D1*E1.'*W1-D3*E3.'*W1;
+    J22=x2-D1*E1.'*W2-D3*E3.'*W2;
+    J31=x1-D3*E3.'*W1;
+    J32=x2-D3*E3.'*W2;
+    M11=x1-D1*E1.'*W1-D1*E2.'*W1;
+    M21=x1-D1*E1.'*W1;
+    M12=x2-D2*E2.'*W1-D2*E2.'*W2;
+    M22=x2-D2*E2.'*W2;
+    %两次OMP稀疏编码
+    for i=1:2000
+        W1(:,[i])=CS_OMP(X1(:,[i]),DD1,1);
+    end%step1
+    for i=1:2000
+        W2(:,[i])=CS_OMP(X2(:,[i]),DD2,1);
+    end%step2
+    for i=1:30
+        N11=J11;
+        N12=J12;
+        N31=J31;
+        for k=1:30
+            if(k~=i)
+                N11=N11-D1(:,[k])*W1([k],:);
+                N12=N12-D1(:,[k])*W2([k],:);
+                N31=N31-D1(:,[k])*W1([k],:);
+            end
+        end
+        if(2*sum(W1([i],:).*W1([i],:))+sum(W2([i],:).*W2([i],:))>0)
+            D1(:,[i])=1/(2*sum(W1([i],:).*W1([i],:))+sum(W2([i],:).*W2([i],:)))*(N11*W1([i],:).'+N12*W2([i],:).'+N31*W1([i],:).');
+        end
+    end%step3
+    for i=1:30
+        N22=J22;
+        N21=J21;
+        N32=J32;
+        for k=1:30
+            if(k~=i)
+                N22=N22-D2(:,[k])*W2([k+30],:);
+                N21=N21-D2(:,[k])*W1([k+30],:);
+                N32=N32-D2(:,[k])*W2([k+30],:);
+            end
+        end
+        if(2*sum(W1([i+30],:).*W1([i+30],:))+sum(W2([i+30],:).*W2([i+30],:))>0)
+            D2(:,[i])=1/(2*sum(W1([i+30],:).*W1([i+30],:))+sum(W2([i+30],:).*W2([i+30],:)))*(N21*W1([i+30],:).'+N22*W2([i+30],:).'+N32*W2([i+30],:).');
+        end
+    end%step4
+    for i=1:15
+        Q11=M11;
+        Q12=M12;
+        Q21=M21;
+        Q22=M22;
+        for k=1:15
+            if(k~=i)
+                Q11=Q11-D3(:,[k])*W1([k+60],:);
+                Q12=Q12-D3(:,[k])*W2([k+60],:);
+                Q21=Q21-D3(:,[k])*W1([k+60],:);
+                Q22=Q22-D3(:,[k])*W2([k+60],:);
+            end
+        end
+        if(2*sum(W1([i+60],:).*W1([i+60],:))+2*sum(W2([i+60],:).*W2([i+60],:))>0)
+            D3(:,[i])=1/(2*sum(W1([i+60],:).*W1([i+60],:))+2*sum(W2([i+60],:).*W2([i+60],:)))*(Q11*W1([i+60],:).'+Q12*W2([i+60],:).'+Q21*W1([i+60],:).'+Q22*W2([i+60],:).');
+        end
+    end%step5
+    a=x1-D*W1;
+    b=x2-D*W2;
+    norm(a,'fro')
+    norm(b,'fro')
+end
+%重构误差
+for i=1:2000
+    R1(:,[i])=x1(:,[i])-D1*E1.'*W1(:,[i])-D3*E3.'*W1(:,[i]);
+    R2(:,[i])=x2(:,[i])-D2*E2.'*W2(:,[i])-D3*E3.'*W2(:,[i]);
+    RE1(:,[i])=power(norm(R1(:,[i]),2),2);
+    RE2(:,[i])=power(norm(R2(:,[i]),2),2);  
+end
+RE=[RE1,RE2];
+%标志
+[f1,xi1] = ksdensity(RE);
+[f2,xi2] = ksdensity(RE1);
+[f3,xi3] = ksdensity(RE2);
+plot(xi1,f1);
+hold on;
+plot(xi2,f2);
+hold on;
+plot(xi3,f3);
+hold on;
+for i=1:100
+    E=normrnd(0,1,[5,1]);
+    m1s11=normrnd(-10,1);
+    m1s12=normrnd(-5,1);
+    m1s21=normrnd(-6,1);
+    m1s22=normrnd(-5,1);
+    m1s1=[m1s11;m1s12];
+    m1s2=[m1s21;m1s22];
+    xF1=A*m1s1+B*m1s2+E;
+    XN1=[XN1,xF1];
+end
+for i=1:100
+    E=normrnd(0,1,[5,1]);
+    m2s11=normrnd(-10,1);
+    m2s12=normrnd(-5,1);
+    m2s21=unifrnd(-3,-2);
+    m2s22=normrnd(5,1);
+    m2s1=[m2s11;m2s12];
+    m2s2=[m2s21;m2s22];
+    xF2=A*m2s1+B*m2s2+E;
+    XN2=[XN2,xF2];
+end   
+for i=1:200
+    E=normrnd(0,1,[5,1]);
+    E=E+[-3.8;-2.8;0;0;0];
+    m2s11=normrnd(-10,1);
+    m2s12=normrnd(-5,1);
+    m2s21=unifrnd(-3,-2);
+    m2s22=normrnd(5,1);
+    m2s1=[m2s11;m2s12];
+    m2s2=[m2s21;m2s22];
+    xf=A*m2s1+B*m2s2+E;
+    XF=[XF,xf];
+end
+XT=[XN1,XN2,XF];
+for i=1:400
+    WT(:,[i])=CS_OMP(XT(:,[i]),D,1);
+end
+XN1_=D*E1*E1.'*WT+D*E3*E3.'*WT;
+XN2_=D*E2*E2.'*WT+D*E3*E3.'*WT;
+for i=1:400
+    SRE1(1,[i])=power(norm(XT(:,[i])-XN1_(:,[i]),2),2);
+    SRE2(1,[i])=power(norm(XT(:,[i])-XN2_(:,[i]),2),2);
+    if(SRE1(1,i)<SRE2(1,i))
+        SRE(1,[i])=SRE1(1,[i]);
+    else
+        SRE(1,[i])=SRE2(1,[i]);
+    end
+end
